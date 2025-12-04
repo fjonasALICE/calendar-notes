@@ -89,6 +89,14 @@ def get_editor_name() -> str:
     return names.get(editor_base, editor_base)
 
 
+def escape_markup(text: str) -> str:
+    """Escape Rich markup characters in user content."""
+    if not text:
+        return text
+    # Escape brackets that could be interpreted as markup
+    return text.replace("[", r"\[").replace("]", r"\]")
+
+
 class EventDetailPanel(Static):
     """Panel showing details of selected calendar event."""
 
@@ -105,13 +113,24 @@ class EventDetailPanel(Static):
         """Update the panel with event details."""
         self.event = event
         if event:
-            location = f"\n📍 {event.location}" if event.location else ""
-            notes = f"\n\n[dim italic]> {event.notes[:200]}...[/]" if event.notes and len(event.notes) > 200 else (f"\n\n[dim italic]> {event.notes}[/]" if event.notes else "")
-            
             editor_name = get_editor_name()
             
-            # Get note preview if note exists
-            note_preview = ""
+            # Escape user content to prevent markup errors
+            safe_title = escape_markup(str(event.title))
+            safe_calendar = escape_markup(str(event.calendar_name))
+            safe_location = escape_markup(str(event.location)) if event.location else ""
+            
+            # Compact time/duration line
+            time_info = f"[bold]{event.time_str}[/] [dim]({event.duration_str})[/]"
+            
+            # Location line (if exists)
+            location_line = f"\n[dim]📍[/] {safe_location}" if safe_location else ""
+            
+            # Calendar badge
+            cal_badge = f"[{calendar_color}]● {safe_calendar}[/]"
+            
+            # Get note content if note exists
+            note_section = ""
             if self.note_manager:
                 note = self.note_manager.find_note_for_event(event.event_id)
                 if note:
@@ -123,26 +142,32 @@ class EventDetailPanel(Static):
                                 end_idx = content.find("---", 3)
                                 if end_idx != -1:
                                     content = content[end_idx + 3:].strip()
-                            # Get first ~400 chars
-                            preview = content[:400]
-                            if len(content) > 400:
-                                preview += "..."
-                            note_preview = f"\n\n[bold]─── Note Preview ───[/]\n\n{preview}"
+                            # Show full content (scrollable)
+                            preview = escape_markup(content) if content else "[dim]Empty note[/]"
+                            note_section = f"""
+[bold green]─── 📝 Note ───[/]
+
+{preview}"""
                     except Exception:
-                        note_preview = "\n\n[bold]─── Note Preview ───[/]\n\n[dim]Unable to load preview[/]"
+                        note_section = "\n[dim]Unable to load note preview[/]"
                 else:
-                    note_preview = "\n\n[dim italic]No note yet - press Enter to create one[/]"
+                    note_section = "\n[dim italic]No note yet[/]"
             
-            self.update(f"""[bold {calendar_color}]{event.title}[/]
+            # Event description (truncated)
+            desc_section = ""
+            if event.notes:
+                safe_notes = escape_markup(str(event.notes))
+                desc_truncated = safe_notes[:150] + "..." if len(safe_notes) > 150 else safe_notes
+                desc_section = f"\n\n[dim]> {desc_truncated}[/]"
+            
+            self.update(f"""[bold {calendar_color}]{safe_title}[/]
 
-📅 {event.date_str}
-⏰ {event.time_str}
-⏱️  {event.duration_str}
-🗓️  [{calendar_color}]{event.calendar_name}[/]{location}{notes}{note_preview}
+{time_info}  •  {cal_badge}{location_line}{desc_section}
+{note_section}
 
-[dim]Press [bold]Enter[/] to open note in {editor_name}[/]""")
+[dim]Enter = open note • {editor_name}[/]""")
         else:
-            self.update("[dim]Select an event to see details[/]")
+            self.update("[dim]← Select an event[/]")
 
 
 class NoteDetailPanel(Static):
@@ -156,10 +181,17 @@ class NoteDetailPanel(Static):
         """Update the panel with note details and preview."""
         self.note = note
         if note:
-            note_type = "[cyan]📅 Event Note[/]" if note.is_event_note else "[green]📝 Standalone[/]"
-            tags_str = ", ".join(f"[yellow]#{tag}[/]" for tag in note.tags) if note.tags else "[dim]no tags[/]"
+            # Escape user content
+            safe_title = escape_markup(str(note.title))
+            safe_filename = escape_markup(str(note.filename))
             
-            # Read note content for preview
+            # Type badge
+            note_type = "[cyan]📅 Event[/]" if note.is_event_note else "[green]📝 Standalone[/]"
+            
+            # Tags inline (escape tag names too)
+            tags_str = " ".join(f"[yellow]#{escape_markup(str(tag))}[/]" for tag in note.tags) if note.tags else ""
+            
+            # Read full note content (scrollable)
             preview = ""
             try:
                 with open(note.filepath, "r", encoding="utf-8") as f:
@@ -169,34 +201,29 @@ class NoteDetailPanel(Static):
                         end_idx = content.find("---", 3)
                         if end_idx != -1:
                             content = content[end_idx + 3:].strip()
-                    # Get first ~500 chars
-                    preview = content[:500]
-                    if len(content) > 500:
-                        preview += "..."
+                    # Show full content (scrollable)
+                    preview = escape_markup(content) if content else "[dim]Empty note[/]"
             except Exception:
                 preview = "[dim]Unable to load preview[/]"
             
-            event_info = ""
-            if note.is_event_note and note.event_title:
-                event_info = f"\n🗓️  [cyan]{note.event_title}[/]"
-                if note.event_date:
-                    event_info += f"\n📅 {note.event_date.strftime('%Y-%m-%d %H:%M')}"
+            # Event info (compact)
+            event_line = ""
+            if note.is_event_note and note.event_date:
+                event_line = f"[dim]{note.event_date.strftime('%Y-%m-%d %H:%M')}[/]  •  "
             
             editor_name = get_editor_name()
-            self.update(f"""[bold]{note.title}[/]
+            self.update(f"""[bold]{safe_title}[/]
 
-{note_type}{event_info}
-🏷️  {tags_str}
-📁 [dim]{note.filename}[/]
+{event_line}{note_type}  {tags_str}
+[dim]{safe_filename}[/]
 
-[bold]─── Preview ───[/]
+[bold green]─── Content ───[/]
 
 {preview}
 
-[dim]Press [bold]Enter[/] to edit in {editor_name}
-Press [bold]d[/] to delete[/]""")
+[dim]Enter = edit • d = delete[/]""")
         else:
-            self.update("[dim]Select a note to see preview[/]")
+            self.update("[dim]← Select a note[/]")
 
 
 class TodoDetailPanel(Static):
@@ -211,20 +238,24 @@ class TodoDetailPanel(Static):
         self.todo = todo
         if todo:
             editor_name = get_editor_name()
-            self.update(f"""[bold yellow]☐ {todo.content or "(empty todo)"}[/]
+            # Escape user content
+            safe_content = escape_markup(str(todo.content)) if todo.content else "(empty)"
+            safe_note_title = escape_markup(str(todo.note_title))
+            safe_filename = escape_markup(str(todo.filepath.name))
+            safe_full_line = escape_markup(str(todo.full_line.strip()))
+            
+            self.update(f"""[bold yellow]☐ {safe_content}[/]
 
-📁 [dim]{todo.filepath.name}[/]
-📄 [cyan]{todo.note_title}[/]
-📍 Line {todo.line_number}
+[cyan]{safe_note_title}[/]  •  [dim]line {todo.line_number}[/]
+[dim]{safe_filename}[/]
 
-[bold]─── Original Line ───[/]
+[bold green]─── Context ───[/]
 
-[dim]{todo.full_line.strip()}[/]
+[dim]{safe_full_line}[/]
 
-[dim]Press [bold]Enter[/] to open note in {editor_name}
-Press [bold]Space[/] to complete (removes line)[/]""")
+[dim]Enter = open note • Space = complete[/]""")
         else:
-            self.update("[dim]Select a todo to see details[/]")
+            self.update("[dim]← Select a todo[/]")
 
 
 class SearchModal(ModalScreen[Optional[str]]):
@@ -707,37 +738,140 @@ class SortModal(ModalScreen[Optional[SortOrder]]):
         self.dismiss(None)
 
 
+class MiniCalendar(Static):
+    """A small calendar widget showing the current month with event indicators."""
+    
+    class DateClicked(Message):
+        """Message sent when a date is clicked."""
+        def __init__(self, date: datetime):
+            super().__init__()
+            self.date = date
+    
+    def __init__(self, selected_date: datetime, event_days: set[int] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.selected_date = selected_date
+        self.event_days = event_days or set()  # Days in the month that have events
+    
+    def update_date(self, date: datetime, event_days: set[int] = None):
+        """Update the calendar to show the given date's month."""
+        self.selected_date = date
+        if event_days is not None:
+            self.event_days = event_days
+        self._render_calendar()
+    
+    def _render_calendar(self):
+        """Render the calendar display."""
+        import calendar
+        
+        today = datetime.now().date()
+        year = self.selected_date.year
+        month = self.selected_date.month
+        selected_day = self.selected_date.day
+        
+        # Month and year header
+        month_name = self.selected_date.strftime("%B %Y")
+        header = f"[bold cyan]{month_name:^22}[/]\n"
+        
+        # Weekday headers
+        header += "[dim] Mo Tu We Th Fr Sa Su[/]\n"
+        
+        # Get the calendar matrix for this month
+        cal = calendar.Calendar(firstweekday=0)  # Monday first
+        month_days = cal.monthdayscalendar(year, month)
+        
+        lines = []
+        for week in month_days:
+            week_str = ""
+            for day in week:
+                if day == 0:
+                    week_str += "   "
+                else:
+                    has_events = day in self.event_days
+                    is_today = day == today.day and month == today.month and year == today.year
+                    is_selected = day == selected_day
+                    
+                    if is_today and is_selected:
+                        day_str = f"[bold reverse cyan]{day:>2}[/]"
+                    elif is_today:
+                        day_str = f"[bold cyan]{day:>2}[/]"
+                    elif is_selected:
+                        day_str = f"[bold reverse yellow]{day:>2}[/]"
+                    elif has_events:
+                        day_str = f"[bold green]{day:>2}[/]"
+                    else:
+                        day_str = f"[dim]{day:>2}[/]"
+                    
+                    # Add dot indicator for events
+                    if has_events and not is_selected:
+                        week_str += f"{day_str}[green]•[/]"
+                    else:
+                        week_str += f"{day_str} "
+            lines.append(week_str)
+        
+        self.update(header + "\n".join(lines))
+    
+    def on_mount(self):
+        """Render calendar on mount."""
+        self._render_calendar()
+    
+    def on_click(self, event):
+        """Handle clicks to navigate to dates."""
+        # For now, just post a message - actual date detection from click position
+        # would be complex, so we'll rely on the detail panel for navigation
+        pass
+
+
 class WeekDayColumn(Static):
     """A single day column in the week view."""
     
-    def __init__(self, date: datetime, events: list[CalendarEvent], is_today: bool = False, **kwargs):
+    class DayClicked(Message):
+        """Message sent when a day is clicked."""
+        def __init__(self, date: datetime):
+            super().__init__()
+            self.date = date
+    
+    def __init__(self, date: datetime, events: list, is_today: bool = False, is_selected: bool = False, **kwargs):
         super().__init__(**kwargs)
         self.date = date
         self.day_events = events
         self.is_today = is_today
+        self.is_selected = is_selected
     
-    def compose(self) -> ComposeResult:
+    def on_click(self):
+        """Handle click to select this day."""
+        self.post_message(self.DayClicked(self.date))
+    
+    def render_content(self) -> str:
+        """Render the day column content."""
         day_name = self.date.strftime("%a")
         day_num = self.date.strftime("%d")
         
-        if self.is_today:
+        if self.is_today and self.is_selected:
+            header = f"[bold reverse cyan]{day_name}[/]\n[bold reverse cyan]{day_num}[/]"
+        elif self.is_today:
             header = f"[bold cyan]{day_name}[/]\n[bold cyan]{day_num}[/]"
+        elif self.is_selected:
+            header = f"[bold reverse yellow]{day_name}[/]\n[bold reverse yellow]{day_num}[/]"
         else:
-            header = f"[bold]{day_name}[/]\n{day_num}"
+            header = f"[bold]{day_name}[/]\n[dim]{day_num}[/]"
         
-        content = header + "\n" + "─" * 8 + "\n"
+        content = header + "\n" + "─" * 10 + "\n"
         
         if self.day_events:
-            for event in self.day_events[:5]:  # Max 5 events per day
-                time_str = event.start_date.strftime("%H:%M") if not event.is_all_day else "••••"
-                title_short = event.title[:8] + "…" if len(event.title) > 9 else event.title
-                content += f"[dim]{time_str}[/]\n{title_short}\n"
-            if len(self.day_events) > 5:
-                content += f"[dim]+{len(self.day_events) - 5} more[/]"
+            for event in self.day_events[:6]:  # Max 6 events per day
+                time_str = event.start_date.strftime("%H:%M") if not event.is_all_day else "━━━━"
+                title_short = event.title[:10] + "…" if len(event.title) > 11 else event.title
+                content += f"[dim]{time_str}[/]\n[bold]{title_short}[/]\n"
+            if len(self.day_events) > 6:
+                content += f"[dim italic]+{len(self.day_events) - 6} more[/]"
         else:
-            content += "[dim]No events[/]"
+            content += "[dim italic]No events[/]"
         
-        self.update(content)
+        return content
+    
+    def on_mount(self):
+        """Render content on mount."""
+        self.update(self.render_content())
 
 
 class CalendarNotesApp(App):
@@ -758,11 +892,43 @@ class CalendarNotesApp(App):
         height: 1fr;
     }
     
-    #events-container {
+    #left-panel {
         width: 2fr;
+        height: 100%;
+    }
+    
+    #mini-calendar {
+        height: auto;
+        padding: 0 1;
+        margin-bottom: 1;
+        text-align: center;
+        border: round $primary-darken-2;
+        background: $surface-darken-1;
+    }
+    
+    #day-view {
+        height: 1fr;
+    }
+    
+    #day-view.hidden {
+        display: none;
+    }
+    
+    #events-container {
+        width: 100%;
         height: 100%;
         border: round $primary;
         padding: 0 1;
+    }
+    
+    #week-view {
+        height: 1fr;
+        display: none;
+        padding: 0;
+    }
+    
+    #week-view.visible {
+        display: block;
     }
     
     #detail-container {
@@ -770,7 +936,7 @@ class CalendarNotesApp(App):
         height: 100%;
         border: round $secondary;
         padding: 1;
-        overflow-y: auto;
+        background: $surface;
     }
     
     #notes-content {
@@ -789,7 +955,7 @@ class CalendarNotesApp(App):
         height: 100%;
         border: round $secondary;
         padding: 1;
-        overflow-y: auto;
+        background: $surface;
     }
     
     .title-bar {
@@ -867,7 +1033,7 @@ class CalendarNotesApp(App):
         height: 100%;
         border: round $secondary;
         padding: 1;
-        overflow-y: auto;
+        background: $surface;
     }
     
     #todos-header {
@@ -897,15 +1063,18 @@ class CalendarNotesApp(App):
     }
     
     #todo-detail {
-        height: 100%;
+        height: auto;
+        background: $surface;
     }
     
     #event-detail {
-        height: 100%;
+        height: auto;
+        background: $surface;
     }
     
     #note-detail {
-        height: 100%;
+        height: auto;
+        background: $surface;
     }
     
     .status-bar {
@@ -924,26 +1093,33 @@ class CalendarNotesApp(App):
         padding: 0;
     }
     
-    #week-view {
-        height: 100%;
-        padding: 1;
-    }
-    
     #week-grid {
         height: 1fr;
-        grid-size: 7;
-        grid-gutter: 1;
+        width: 100%;
+        layout: horizontal;
     }
     
     .week-day {
+        width: 1fr;
         height: 100%;
         border: round $primary-darken-2;
         padding: 0 1;
         text-align: center;
+        overflow-y: auto;
+    }
+    
+    .week-day:hover {
+        border: round $accent-darken-1;
+        background: $surface-lighten-1;
     }
     
     .week-day-today {
         border: round $accent;
+        background: $primary-darken-3;
+    }
+    
+    .week-day-selected {
+        border: double $warning;
     }
     
     #view-toggle {
@@ -984,6 +1160,7 @@ class CalendarNotesApp(App):
         Binding("3", "show_todos", "Todos"),
         Binding("space", "complete_todo", "Complete", show=False),
         Binding("tab", "switch_tab", "Switch Tab", show=False),
+        Binding("enter", "week_enter", "Select Day", show=False),
     ]
 
     TITLE = "📅 Calendar Notes"
@@ -1020,8 +1197,18 @@ class CalendarNotesApp(App):
                         yield Button("Week", id="view-btn", variant="default")
                     
                     with Horizontal(id="content"):
-                        with Container(id="events-container"):
-                            yield DataTable(id="events-table", cursor_type="row")
+                        # Left panel with calendar and events
+                        with Vertical(id="left-panel"):
+                            yield MiniCalendar(datetime.now(), id="mini-calendar")
+                            # Day view (default)
+                            with Container(id="day-view"):
+                                with Container(id="events-container"):
+                                    yield DataTable(id="events-table", cursor_type="row")
+                            # Week view (hidden by default)
+                            with Container(id="week-view"):
+                                with Horizontal(id="week-grid"):
+                                    pass  # Week columns added dynamically
+                        # Right panel with event details
                         with ScrollableContainer(id="detail-container"):
                             yield EventDetailPanel(id="event-detail")
                 
@@ -1104,11 +1291,11 @@ class CalendarNotesApp(App):
     def _setup_events_table(self):
         """Configure the events data table."""
         table = self.query_one("#events-table", DataTable)
-        table.add_column("Time", width=12, key="time")
-        table.add_column("Event", width=32, key="event")
-        table.add_column("Calendar", width=14, key="calendar")
-        table.add_column("Tags", width=16, key="tags")
-        table.add_column("📝", width=4, key="note")
+        table.add_column("Time", width=14, key="time")
+        table.add_column("Event", width=35, key="event")
+        table.add_column("Cal", width=12, key="calendar")
+        table.add_column("Tags", width=12, key="tags")
+        table.add_column("📝", width=3, key="note")
 
     def _setup_notes_table(self):
         """Configure the notes data table."""
@@ -1167,7 +1354,59 @@ class CalendarNotesApp(App):
         # Update view button text
         view_btn = self.query_one("#view-btn", Button)
         view_btn.label = "Day" if self.view_mode == ViewMode.WEEK else "Week"
+        
+        # Get event days for the current month (for mini calendar indicators)
+        event_days = self._get_event_days_for_month()
+        
+        # Update mini calendar with event indicators
+        try:
+            mini_cal = self.query_one("#mini-calendar", MiniCalendar)
+            mini_cal.update_date(self.current_date, event_days)
+        except Exception:
+            pass
+        
+        # Toggle between day and week view
+        day_view = self.query_one("#day-view", Container)
+        week_view = self.query_one("#week-view", Container)
+        
+        if self.view_mode == ViewMode.WEEK:
+            day_view.add_class("hidden")
+            week_view.add_class("visible")
+            self._refresh_week_view()
+        else:
+            day_view.remove_class("hidden")
+            week_view.remove_class("visible")
+            self._refresh_day_view(table)
 
+        # Reset selection
+        self.selected_event = None
+        self.query_one("#event-detail", EventDetailPanel).update_event(None)
+    
+    def _get_event_days_for_month(self) -> set[int]:
+        """Get the set of days in the current month that have events."""
+        import calendar
+        
+        year = self.current_date.year
+        month = self.current_date.month
+        
+        # Get first and last day of month
+        _, last_day = calendar.monthrange(year, month)
+        start_date = datetime(year, month, 1)
+        end_date = datetime(year, month, last_day, 23, 59, 59)
+        
+        # Get events for the entire month
+        month_events = self.calendar.get_events_for_range(start_date, end_date)
+        
+        # Extract the days that have events
+        event_days = set()
+        for event in month_events:
+            if event.start_date.month == month:
+                event_days.add(event.start_date.day)
+        
+        return event_days
+    
+    def _refresh_day_view(self, table: DataTable):
+        """Refresh the day view with events for the current day."""
         # Get events for the current day
         self.events = self.calendar.get_events_for_day(self.current_date)
 
@@ -1199,10 +1438,43 @@ class CalendarNotesApp(App):
                     note_marker,
                     key=event.event_id,
                 )
-
-        # Reset selection
-        self.selected_event = None
-        self.query_one("#event-detail", EventDetailPanel).update_event(None)
+    
+    def _refresh_week_view(self):
+        """Refresh the week view with events for the current week."""
+        week_grid = self.query_one("#week-grid", Horizontal)
+        
+        # Clear existing week columns
+        week_grid.remove_children()
+        
+        # Get the start of the week (Monday)
+        week_start = self.current_date - timedelta(days=self.current_date.weekday())
+        today = datetime.now().date()
+        
+        # Create 7 day columns
+        for i in range(7):
+            day_date = week_start + timedelta(days=i)
+            day_events = self.calendar.get_events_for_day(day_date)
+            
+            is_today = day_date.date() == today
+            is_selected = day_date.date() == self.current_date.date()
+            
+            classes = "week-day"
+            if is_today:
+                classes += " week-day-today"
+            if is_selected:
+                classes += " week-day-selected"
+            
+            column = WeekDayColumn(
+                day_date,
+                day_events,
+                is_today=is_today,
+                is_selected=is_selected,
+                classes=classes,
+            )
+            week_grid.mount(column)
+        
+        # Store week events for reference (events from selected day)
+        self.events = self.calendar.get_events_for_day(self.current_date)
 
     def _refresh_notes(self):
         """Refresh the notes list."""
@@ -1385,6 +1657,17 @@ class CalendarNotesApp(App):
     def on_refresh_todos_btn(self):
         self._refresh_todos()
         self.notify("Todos refreshed", timeout=1)
+    
+    @on(WeekDayColumn.DayClicked)
+    def on_week_day_clicked(self, event: WeekDayColumn.DayClicked):
+        """Handle click on a day in the week view."""
+        self.current_date = event.date
+        self._refresh_events()
+        # Also update the event detail panel with first event of that day if any
+        if self.events:
+            self.selected_event = self.events[0]
+            cal_color = self._get_calendar_color(self.events[0].calendar_name)
+            self.query_one("#event-detail", EventDetailPanel).update_event(self.events[0], cal_color)
 
     def _open_in_editor(self, filepath: Path):
         """Open a note file in the configured editor."""
@@ -1482,10 +1765,18 @@ class CalendarNotesApp(App):
         """Toggle between day and week view."""
         if self.view_mode == ViewMode.DAY:
             self.view_mode = ViewMode.WEEK
-            self.notify("Week view - use arrow keys to navigate days", timeout=2)
+            self.notify("Week view - click a day or press Enter to switch to day view", timeout=2)
         else:
             self.view_mode = ViewMode.DAY
         self._refresh_events()
+
+    def action_week_enter(self):
+        """In week view, pressing Enter switches to day view for the current date."""
+        tabbed = self.query_one(TabbedContent)
+        if tabbed.active == "events-tab" and self.view_mode == ViewMode.WEEK:
+            self.view_mode = ViewMode.DAY
+            self._refresh_events()
+            self.query_one("#events-table", DataTable).focus()
 
     def action_refresh(self):
         """Refresh events and notes."""
@@ -1586,3 +1877,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

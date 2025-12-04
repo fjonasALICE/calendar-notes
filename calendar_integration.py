@@ -253,6 +253,10 @@ class CalendarAccess:
         start = today - timedelta(days=today.weekday())
         end = start + timedelta(days=7)
         return self.get_events(start, end)
+    
+    def get_events_for_range(self, start_date: datetime, end_date: datetime) -> list[CalendarEvent]:
+        """Get all events within a date range."""
+        return self.get_events(start_date, end_date)
 
     def get_calendars(self) -> list[str]:
         """Get list of available calendar names."""
