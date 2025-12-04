@@ -1,0 +1,27 @@
+# Virtual environment
+venv/
+
+# Notes content (keep structure, exclude actual notes)
+notes/events/*.md
+notes/standalone/*.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
