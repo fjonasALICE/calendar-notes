@@ -28,6 +28,8 @@ class IndicoContribution:
     duration: Optional[str] = None
     description: Optional[str] = None
     material_url: Optional[str] = None
+    date: Optional[str] = None  # Date in YYYY-MM-DD format
+    datetime_sort_key: Optional[str] = None  # Combined date+time for sorting
 
 
 @dataclass
@@ -196,7 +198,24 @@ class IndicoClient:
                 continue
 
             speakers = self._parse_speakers(entry.get("speakers", []) or entry.get("presenters", []))
-            start_time = entry.get("startDate", {}).get("time") if isinstance(entry.get("startDate"), dict) else None
+            
+            # Extract date and time from startDate
+            start_date_data = entry.get("startDate", {})
+            start_time = None
+            date = None
+            datetime_sort_key = None
+            
+            if isinstance(start_date_data, dict):
+                start_time = start_date_data.get("time")
+                date = start_date_data.get("date")  # YYYY-MM-DD format
+                # Create sort key: combine date and time for proper sorting
+                if date and start_time:
+                    datetime_sort_key = f"{date} {start_time}"
+                elif date:
+                    datetime_sort_key = date
+                elif start_time:
+                    datetime_sort_key = start_time
+            
             duration = self._parse_duration(entry.get("duration"))
             
             # Include session context in title if available
@@ -208,10 +227,12 @@ class IndicoClient:
                 start_time=start_time,
                 duration=duration,
                 description=entry.get("description"),
+                date=date,
+                datetime_sort_key=datetime_sort_key,
             ))
 
-        # Sort by start time
-        contributions.sort(key=lambda c: c.start_time or "")
+        # Sort by date and time
+        contributions.sort(key=lambda c: c.datetime_sort_key or "")
 
         return contributions
 
@@ -233,7 +254,24 @@ class IndicoClient:
                 continue
 
             speakers = self._parse_speakers(contrib.get("speakers", []) or contrib.get("presenters", []))
-            start_time = contrib.get("startDate", {}).get("time") if isinstance(contrib.get("startDate"), dict) else None
+            
+            # Extract date and time from startDate
+            start_date_data = contrib.get("startDate", {})
+            start_time = None
+            date = None
+            datetime_sort_key = None
+            
+            if isinstance(start_date_data, dict):
+                start_time = start_date_data.get("time")
+                date = start_date_data.get("date")  # YYYY-MM-DD format
+                # Create sort key: combine date and time for proper sorting
+                if date and start_time:
+                    datetime_sort_key = f"{date} {start_time}"
+                elif date:
+                    datetime_sort_key = date
+                elif start_time:
+                    datetime_sort_key = start_time
+            
             duration = self._parse_duration(contrib.get("duration"))
 
             contributions.append(IndicoContribution(
@@ -242,10 +280,12 @@ class IndicoClient:
                 start_time=start_time,
                 duration=duration,
                 description=contrib.get("description"),
+                date=date,
+                datetime_sort_key=datetime_sort_key,
             ))
 
-        # Sort by start time
-        contributions.sort(key=lambda c: c.start_time or "99:99:99")
+        # Sort by date and time
+        contributions.sort(key=lambda c: c.datetime_sort_key or "9999-99-99 99:99:99")
 
         return contributions
 
@@ -397,23 +437,56 @@ def format_agenda_markdown(agenda: IndicoAgenda) -> str:
         lines.append("")
         return "\n".join(lines)
 
-    for i, contrib in enumerate(agenda.contributions, 1):
-        # Title with optional time
-        if contrib.start_time:
-            lines.append(f"**{contrib.start_time}** - {contrib.title}")
-        else:
-            lines.append(f"**{i}.** {contrib.title}")
+    # Group contributions by date for multi-day events
+    from collections import defaultdict
+    from datetime import datetime
+    
+    contributions_by_date = defaultdict(list)
+    for contrib in agenda.contributions:
+        date_key = contrib.date if contrib.date else "unknown"
+        contributions_by_date[date_key].append(contrib)
+    
+    # Check if this is a multi-day event (more than one date)
+    is_multiday = len(contributions_by_date) > 1 or (len(contributions_by_date) == 1 and "unknown" not in contributions_by_date)
+    
+    # Sort dates
+    sorted_dates = sorted(contributions_by_date.keys(), key=lambda d: d if d != "unknown" else "9999-99-99")
+    
+    for date_key in sorted_dates:
+        date_contribs = contributions_by_date[date_key]
+        
+        # Add date header for multi-day events
+        if is_multiday and date_key != "unknown":
+            # Format date nicely (e.g., "Monday, December 8, 2025")
+            try:
+                date_obj = datetime.strptime(date_key, "%Y-%m-%d")
+                formatted_date = date_obj.strftime("%A, %B %d, %Y")
+                lines.append(f"### {formatted_date}")
+                lines.append("")
+            except ValueError:
+                lines.append(f"### {date_key}")
+                lines.append("")
+        
+        # List contributions for this date
+        for i, contrib in enumerate(date_contribs, 1):
+            # Title with optional time
+            if contrib.start_time:
+                lines.append(f"**{contrib.start_time}** - {contrib.title}")
+            else:
+                lines.append(f"**{i}.** {contrib.title}")
+            
+            lines.append("")
 
-        # Speakers
-        if contrib.speakers:
-            speakers_str = ", ".join(contrib.speakers)
-            lines.append(f"   - *Speakers*: {speakers_str}")
+            # Speakers
+            if contrib.speakers:
+                speakers_str = ", ".join(contrib.speakers)
+                lines.append(f"- *Speakers*: {speakers_str}")
 
-        # Duration
-        if contrib.duration:
-            lines.append(f"   - *Duration*: {contrib.duration}")
+            # Duration
+            if contrib.duration:
+                lines.append(f"- *Duration*: {contrib.duration}")
 
-        lines.append("")
+            lines.append("")
 
     return "\n".join(lines)
 
